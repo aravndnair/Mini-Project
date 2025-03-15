@@ -1,9 +1,9 @@
+import 'dart:ui';
+
+import 'package:cloudinary_flutter/cloudinary_context.dart';
+import 'package:cloudinary_url_gen/cloudinary.dart';
 import 'package:final_app_vision/home.dart';
 import 'package:flutter/material.dart';
-import 'dart:ui';
-import 'package:cloudinary_flutter/cloudinary_context.dart';
-import 'package:cloudinary_flutter/image/cld_image.dart';
-import 'package:cloudinary_url_gen/cloudinary.dart';
 
 void main() {
   CloudinaryContext.cloudinary =
