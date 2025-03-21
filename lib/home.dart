@@ -1,58 +1,24 @@
+
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'package:cloudinary_flutter/cloudinary_context.dart';
-import 'package:cloudinary_flutter/image/cld_image.dart';
-import 'package:cloudinary_url_gen/cloudinary.dart';
 import 'package:permission_handler/permission_handler.dart';
-
-class HomeScreen extends StatelessWidget {
+import 'location_tracking_page.dart';
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Vision Assistant',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6750A4),
-          brightness: Brightness.light,
-        ),
-        fontFamily: 'Poppins',
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6750A4),
-          brightness: Brightness.dark,
-        ),
-        fontFamily: 'Poppins',
-      ),
-      themeMode: ThemeMode.system,
-      home: const VisionAssistantScreen(),
-    );
-  }
+  _HomeScreenState createState() => _HomeScreenState();
 }
 
-class VisionAssistantScreen extends StatefulWidget {
-  const VisionAssistantScreen({super.key});
-
-  @override
-  _VisionAssistantScreenState createState() => _VisionAssistantScreenState();
-}
-
-class _VisionAssistantScreenState extends State<VisionAssistantScreen>
+class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   File? _image;
   final ImagePicker _picker = ImagePicker();
-  final TextEditingController _promptController = TextEditingController();
   String _response = "";
   bool _isProcessing = false;
   String _imageUrl = "";
@@ -67,6 +33,7 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
   // For speech-to-text
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _isListening = false;
+  bool _isHolding = false;
 
   @override
   void initState() {
@@ -90,9 +57,6 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
 
     // Initialize STT
     _initSpeech();
-
-    // Set default prompt
-    _promptController.text = "Describe this image in detail. What do you see?";
   }
 
   Future<void> _initTts() async {
@@ -104,9 +68,7 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
 
   Future<void> _initSpeech() async {
     bool available = await _speech.initialize();
-    // Optionally, handle the case when speech recognition is not available
     if (!available) {
-      // Provide feedback to the user or disable mic functionality
       print("Speech recognition not available");
     }
   }
@@ -125,14 +87,12 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
         setState(() => _isListening = true);
         await _speech.listen(
           onResult: _onSpeechResult,
-          listenFor: Duration(seconds: 30), // Listen for 30 seconds max
-          partialResults: true, // Update text while speaking
+          listenFor: Duration(seconds: 30),
+          partialResults: true,
         );
       } else {
-        // Show a snackbar if speech recognition isn't available
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text("Speech recognition not available on this device")),
+          SnackBar(content: Text("Speech recognition not available")),
         );
       }
     } else {
@@ -141,13 +101,12 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
     }
   }
 
-// New method to handle speech results
   void _onSpeechResult(result) {
     setState(() {
-      _promptController.text = result.recognizedWords;
-      // If you want to automatically stop listening when speech is finished
+      _response = result.recognizedWords;
       if (result.finalResult) {
         _isListening = false;
+        _analyzeImage(query: _response); // Send user query to the model
       }
     });
   }
@@ -155,7 +114,6 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
   @override
   void dispose() {
     _animationController.dispose();
-    _promptController.dispose();
     flutterTts.stop();
     super.dispose();
   }
@@ -174,8 +132,7 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
       final jsonMap = jsonDecode(responseString);
 
       setState(() {
-        final url = jsonMap['url'];
-        _imageUrl = url;
+        _imageUrl = jsonMap['url'];
       });
     }
   }
@@ -194,9 +151,8 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
         _response = "";
       });
 
-      // Automatically speak a confirmation for blind users
-      _speak(
-          "Image captured. Ask me about this image by tapping the microphone button or the analyze button.");
+      // Automatically analyze the image and provide a description
+      _analyzeImage();
     }
   }
 
@@ -212,16 +168,13 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
         _response = "";
       });
 
-      // Speak confirmation
-      _speak("Image selected from gallery. Ask me about this image.");
+      // Automatically analyze the image and provide a description
+      _analyzeImage();
     }
   }
 
-  Future<void> _analyzeImage() async {
+  Future<void> _analyzeImage({String? query}) async {
     if (_image == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Please take or select an image first")),
-      );
       _speak("Please take or select an image first");
       return;
     }
@@ -230,13 +183,8 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
       _isProcessing = true;
     });
 
-    Future<bool> _requestMicrophonePermission() async {
-      var status = await Permission.microphone.request();
-      return status.isGranted;
-    }
-
     try {
-      // Upload the image to Cloudinary and set _imageUrl
+      // Upload the image to Cloudinary
       await upload();
 
       // Use the API to get the completion
@@ -252,7 +200,7 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
             {
               'role': 'user',
               'content': [
-                {'type': 'text', 'text': _promptController.text},
+                {'type': 'text', 'text': query ?? "Describe this image in 30 words."},
                 {
                   'type': 'image_url',
                   'image_url': {'url': _imageUrl}
@@ -274,7 +222,7 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
           _isProcessing = false;
         });
 
-        // Automatically read the response for blind users
+        // Automatically read the response
         _speak(result);
       } else {
         setState(() {
@@ -300,7 +248,7 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Vision Assistant',
+          'Sense AI',
           style: textTheme.titleLarge?.copyWith(
             fontWeight: FontWeight.bold,
           ),
@@ -308,9 +256,43 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
         centerTitle: true,
         elevation: 0,
         backgroundColor: colorScheme.surface,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.location_on),
+            tooltip: 'Track Location',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const LocationTrackingPage(),
+                ),
+              );
+            },
+         
+      ),
+        ],
       ),
       body: GestureDetector(
-        onTap: () => FocusScope.of(context).unfocus(),
+        onLongPressStart: (_) {
+          // Stop TTS if it's speaking
+          flutterTts.stop().then((_) {
+            setState(() {
+              _isHolding = true;
+            });
+            _listen(); // Start listening to the user's query
+          });
+        },
+        onLongPressEnd: (_) {
+          setState(() {
+            _isHolding = false;
+          });
+          _speech.stop().then((_) {
+            if (_response.isNotEmpty) {
+              // Send the recognized query to the model
+              _analyzeImage(query: _response);
+            }
+          });
+        },
         child: SafeArea(
           child: Column(
             children: [
@@ -334,7 +316,7 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
                                 color: colorScheme.shadow.withOpacity(0.1),
                                 blurRadius: 10,
                                 offset: const Offset(0, 4),
-                              ),
+                              )
                             ],
                           ),
                           child: ClipRRect(
@@ -357,15 +339,15 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
                                           style: textTheme.bodyLarge?.copyWith(
                                             color: colorScheme.onSurfaceVariant
                                                 .withOpacity(0.6),
-                                          ),
+                                        ),
                                         ),
                                         Text(
                                           'Double tap for quick capture',
                                           style: textTheme.bodySmall?.copyWith(
                                             color: colorScheme.onSurfaceVariant
                                                 .withOpacity(0.4),
-                                          ),
                                         ),
+                                        )
                                       ],
                                     ),
                                   )
@@ -422,77 +404,6 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
 
                       const SizedBox(height: 24),
 
-                      // Prompt input
-                      Text(
-                        'Ask about the image:',
-                        style: textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _promptController,
-                        decoration: InputDecoration(
-                          hintText:
-                              'What would you like to know about this image?',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          filled: true,
-                          fillColor: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest
-                              .withOpacity(0.5),
-                          suffixIcon: IconButton(
-                            onPressed: _listen,
-                            tooltip: _isListening
-                                ? 'Stop listening'
-                                : 'Start listening',
-                            icon: AnimatedSwitcher(
-                              duration: Duration(milliseconds: 200),
-                              child: Icon(
-                                _isListening ? Icons.mic : Icons.mic_none,
-                                key: ValueKey(_isListening),
-                                color: _isListening
-                                    ? Theme.of(context).colorScheme.primary
-                                    : null,
-                              ),
-                            ),
-                          ),
-                        ),
-                        minLines: 2,
-                        maxLines: 3,
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Analyze button
-                      ElevatedButton.icon(
-                        onPressed: _isProcessing ? null : _analyzeImage,
-                        icon: _isProcessing
-                            ? SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: colorScheme.onPrimary,
-                                ),
-                              )
-                            : const Icon(Icons.search),
-                        label: Text(
-                            _isProcessing ? 'Analyzing...' : 'Analyze Image'),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          backgroundColor: colorScheme.primary,
-                          foregroundColor: colorScheme.onPrimary,
-                          minimumSize: const Size(double.infinity, 56),
-                          elevation: 2,
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
                       // Response section
                       if (_response.isNotEmpty) ...[
                         Text(
@@ -530,25 +441,6 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
                                     onPressed: () => _speak(_response),
                                     icon: const Icon(Icons.volume_up),
                                     tooltip: 'Read aloud',
-                                    style: IconButton.styleFrom(
-                                      backgroundColor:
-                                          colorScheme.surfaceContainerHighest,
-                                      foregroundColor: colorScheme.primary,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  IconButton(
-                                    onPressed: () {
-                                      // Copy to clipboard functionality would go here
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                            content: Text(
-                                                "Response copied to clipboard")),
-                                      );
-                                    },
-                                    icon: const Icon(Icons.copy),
-                                    tooltip: 'Copy to clipboard',
                                     style: IconButton.styleFrom(
                                       backgroundColor:
                                           colorScheme.surfaceContainerHighest,
@@ -596,16 +488,10 @@ class _VisionAssistantScreenState extends State<VisionAssistantScreen>
                       isActive: _isListening,
                     ),
                     _buildAccessibilityButton(
-                      icon: Icons.play_arrow,
-                      label: 'Analyze',
-                      onPressed: _analyzeImage,
-                      color: colorScheme.tertiary,
-                    ),
-                    _buildAccessibilityButton(
                       icon: Icons.volume_up,
                       label: 'Repeat',
                       onPressed: () => _speak(_response.isEmpty
-                          ? "No analysis yet. Please capture an image and analyze it."
+                          ? "No analysis yet. Please capture an image."
                           : _response),
                       color: colorScheme.error,
                     ),
