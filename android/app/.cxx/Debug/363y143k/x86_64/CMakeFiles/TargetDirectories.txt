@@ -1,0 +1,2 @@
+C:/Users/gauth/OneDrive/Desktop/mini/miniproject/android/app/.cxx/Debug/363y143k/x86_64/CMakeFiles/edit_cache.dir
+C:/Users/gauth/OneDrive/Desktop/mini/miniproject/android/app/.cxx/Debug/363y143k/x86_64/CMakeFiles/rebuild_cache.dir
